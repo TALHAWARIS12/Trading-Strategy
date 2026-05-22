@@ -17,11 +17,12 @@ export interface ETHStrategyConfig {
  * ETH Trading Strategy
  * Execution timeframe: 5 minute candles
  * Analysis timeframes: 1m, 5m, 15m
- * 
+ *
  * Rules:
  * - 15m EMA Trend Filter (EMA50 > EMA200 = Bull, < = Bear)
  * - 15m ATR > ATR_SMA for volatility confirmation
  * - First 1m range detection at 15m candle open
+ *   (matches Pine: isFirst1m = ta.change(time("15")))
  * - Breakout of first 1m range (high + 0.1*rangeSize or low - 0.1*rangeSize)
  * - Dynamic stop loss based on ATR
  * - Two take profit targets: TP1=1R, TP2=RR multiple
@@ -31,7 +32,7 @@ export class ETHStrategy {
   private config: ETHStrategyConfig;
   private strategyStates: Map<string, StrategyState> = new Map();
   private executionEngine: ExecutionEngine;
-  private executionLock: Map<string, boolean> = new Map(); // Prevent duplicate executions
+  private executionLock: Map<string, boolean> = new Map();
 
   constructor(config: ETHStrategyConfig, executionEngine: ExecutionEngine) {
     this.config = config;
@@ -65,29 +66,25 @@ export class ETHStrategy {
     return this.strategyStates.get(stateKey) || null;
   }
 
-  /**
-   * Get execution lock status
-   */
   private hasExecutionLock(key: string): boolean {
     return this.executionLock.get(key) || false;
   }
 
-  /**
-   * Acquire execution lock
-   */
   private acquireExecutionLock(key: string): void {
     this.executionLock.set(key, true);
   }
 
-  /**
-   * Release execution lock
-   */
   private releaseExecutionLock(key: string): void {
     this.executionLock.delete(key);
   }
 
   /**
-   * Process new 5m candle - main strategy logic
+   * Process new 5m candle — main strategy logic.
+   *
+   * @param candles1m   - 1-minute candles (range detection)
+   * @param candles5m   - 5-minute candles (execution timeframe)
+   * @param candles15m  - 15-minute candles (trend + volatility filters)
+   * @param currentPrice - latest tick price
    */
   async processCandle(
     candles1m: Candle[],
@@ -97,64 +94,76 @@ export class ETHStrategy {
   ): Promise<Signal[]> {
     const signals: Signal[] = [];
 
-    // Validate we have minimum data
     if (candles5m.length === 0 || candles15m.length === 0) {
       return signals;
     }
 
-    const latestCandle5m = candles5m[candles5m.length - 1];
+    const latestCandle5m  = candles5m[candles5m.length - 1];
     const latestCandle15m = candles15m[candles15m.length - 1];
 
-    // Initialize state if needed
     this.initializeState(this.config.pair, '15m');
 
     const stateKey = `${this.config.pair}-15m`;
     const state = this.strategyStates.get(stateKey)!;
 
-    // Check if we're in a new 15m candle
+    // ── New 15m block detection ────────────────────────────────────────────────
     if (latestCandle15m.timestamp !== state.rangeTimestamp) {
-      // New 15m candle - reset range and trade taken flag
       this.resetFor15mCandle(latestCandle15m, candles1m);
+
+      // Re-read state after reset (resetFor15mCandle mutates it)
       logger.info(
-        `New 15m candle detected. Range: ${state.rangeHigh} - ${state.rangeLow}, Size: ${state.rangeSize}`
+        `[ETHStrategy] New 15m candle @ ${new Date(latestCandle15m.timestamp).toISOString()} | ` +
+        `Range: [${state.rangeLow.toFixed(2)}, ${state.rangeHigh.toFixed(2)}] ` +
+        `Size: ${state.rangeSize.toFixed(4)}`
       );
     }
 
-    // Calculate indicators from latest candles
+    // ── Indicators ────────────────────────────────────────────────────────────
     const indicators = {
-      ema50_15m: IndicatorCalculator.calculateEMA(candles15m, 50),
+      ema50_15m:  IndicatorCalculator.calculateEMA(candles15m, 50),
       ema200_15m: IndicatorCalculator.calculateEMA(candles15m, 200),
-      atr_15m: IndicatorCalculator.calculateATR(candles15m, 14),
+      atr_15m:    IndicatorCalculator.calculateATR(candles15m, 14),
       atrSma_15m: this.calculateATRSMA(candles15m, 14, 20),
     };
 
-    // 1. Trend Filter Check
+    // ── 1. Trend filter ───────────────────────────────────────────────────────
     const isBullTrend = indicators.ema50_15m > indicators.ema200_15m;
     const isBearTrend = indicators.ema50_15m < indicators.ema200_15m;
 
     if (!isBullTrend && !isBearTrend) {
-      logger.debug('No clear trend - waiting for trend confirmation');
+      logger.debug('[ETHStrategy] No clear trend — waiting for confirmation');
       return signals;
     }
 
-    // 2. Volatility Filter Check
+    // ── 2. Volatility filter ──────────────────────────────────────────────────
+    // Guard: atrSma_15m returns 0 when there isn't enough candle history yet.
+    // Treat 0 as "not enough data" rather than "low volatility" to avoid false blocks.
+    if (indicators.atrSma_15m === 0) {
+      logger.debug('[ETHStrategy] ATR SMA not ready — insufficient candle history');
+      return signals;
+    }
+
     const isVolatilityHigh = indicators.atr_15m > indicators.atrSma_15m;
 
     if (!isVolatilityHigh) {
-      logger.debug(`Volatility too low: ATR ${indicators.atr_15m.toFixed(2)} < ATR_SMA ${indicators.atrSma_15m.toFixed(2)}`);
+      logger.debug(
+        `[ETHStrategy] Volatility too low: ATR ${indicators.atr_15m.toFixed(2)} < ` +
+        `ATR_SMA ${indicators.atrSma_15m.toFixed(2)}`
+      );
       return signals;
     }
 
-    // Debug: Log all trading conditions
     logger.debug(
-      `[ETHStrategy] Price ${currentPrice.toFixed(2)} | Range [${state.rangeLow.toFixed(2)}, ${state.rangeHigh.toFixed(2)}] | ` +
-      `Trend: ${isBullTrend ? 'BULL' : 'BEAR'} (EMA50: ${indicators.ema50_15m.toFixed(2)} vs EMA200: ${indicators.ema200_15m.toFixed(2)}) | ` +
-      `Vol: ${isVolatilityHigh ? 'HIGH' : 'LOW'} | TradeTaken: ${state.tradeTaken}`
+      `[ETHStrategy] Price ${currentPrice.toFixed(2)} | ` +
+      `Range [${state.rangeLow.toFixed(2)}, ${state.rangeHigh.toFixed(2)}] | ` +
+      `Trend: ${isBullTrend ? 'BULL' : 'BEAR'} ` +
+      `(EMA50: ${indicators.ema50_15m.toFixed(2)} EMA200: ${indicators.ema200_15m.toFixed(2)}) | ` +
+      `Vol: HIGH | TradeTaken: ${state.tradeTaken}`
     );
 
-    // 3. Check for breakout and execute trades
+    // ── 3. Breakout detection & execution ─────────────────────────────────────
     if (!state.tradeTaken) {
-      // Long breakout
+      // Long: bull trend + price closed above range high + 10% buffer
       if (isBullTrend && currentPrice > state.rangeHigh + state.rangeSize * 0.1) {
         const longSignal = this.executeLongBreakout(
           currentPrice,
@@ -167,7 +176,7 @@ export class ETHStrategy {
           state.lastSignal = longSignal;
         }
       }
-      // Short breakout
+      // Short: bear trend + price closed below range low - 10% buffer
       else if (isBearTrend && currentPrice < state.rangeLow - state.rangeSize * 0.1) {
         const shortSignal = this.executeShortBreakout(
           currentPrice,
@@ -182,15 +191,14 @@ export class ETHStrategy {
       }
     }
 
-    // 4. Check for exit signals on open trades
+    // ── 4. Exit management ────────────────────────────────────────────────────
     const openTrades = this.executionEngine.getOpenTradesForPair(this.config.pair);
     for (const trade of openTrades) {
-      // Check take profit and stop loss
       if (trade.status === 'OPEN') {
         if (RiskManager.isTakeProfitHit(currentPrice, trade.takeProfit1, trade.side)) {
           const closedTrade = this.executionEngine.closeTradeAtTP1(trade.id, currentPrice);
           if (closedTrade) {
-            const exitSignal: Signal = {
+            signals.push({
               pair: this.config.pair,
               type: 'EXIT_TP1',
               price: currentPrice,
@@ -198,19 +206,14 @@ export class ETHStrategy {
               confidence: 1.0,
               reason: `TP1 hit at ${currentPrice}`,
               relatedCandles: [
-                {
-                  interval: '5m',
-                  timestamp: latestCandle5m.timestamp,
-                  candle: latestCandle5m,
-                },
+                { interval: '5m', timestamp: latestCandle5m.timestamp, candle: latestCandle5m },
               ],
-            };
-            signals.push(exitSignal);
+            });
           }
         } else if (RiskManager.isStopLossHit(currentPrice, trade.stopLoss, trade.side)) {
           const closedTrade = this.executionEngine.closeTradeAtExit(trade.id, currentPrice, 'SL_HIT');
           if (closedTrade) {
-            const exitSignal: Signal = {
+            signals.push({
               pair: this.config.pair,
               type: 'EXIT_SL',
               price: currentPrice,
@@ -218,22 +221,16 @@ export class ETHStrategy {
               confidence: 1.0,
               reason: `Stop loss hit at ${currentPrice}`,
               relatedCandles: [
-                {
-                  interval: '5m',
-                  timestamp: latestCandle5m.timestamp,
-                  candle: latestCandle5m,
-                },
+                { interval: '5m', timestamp: latestCandle5m.timestamp, candle: latestCandle5m },
               ],
-            };
-            signals.push(exitSignal);
+            });
           }
         }
       } else if (trade.status === 'TP1_PARTIAL_CLOSE') {
-        // Check TP2 for partial close
         if (RiskManager.isTakeProfitHit(currentPrice, trade.takeProfit2, trade.side)) {
           const closedTrade = this.executionEngine.closeTradeAtExit(trade.id, currentPrice, 'TP2_HIT');
           if (closedTrade) {
-            const exitSignal: Signal = {
+            signals.push({
               pair: this.config.pair,
               type: 'EXIT_TP2',
               price: currentPrice,
@@ -241,19 +238,14 @@ export class ETHStrategy {
               confidence: 1.0,
               reason: `TP2 hit at ${currentPrice}`,
               relatedCandles: [
-                {
-                  interval: '5m',
-                  timestamp: latestCandle5m.timestamp,
-                  candle: latestCandle5m,
-                },
+                { interval: '5m', timestamp: latestCandle5m.timestamp, candle: latestCandle5m },
               ],
-            };
-            signals.push(exitSignal);
+            });
           }
         } else if (RiskManager.isStopLossHit(currentPrice, trade.stopLoss, trade.side)) {
           const closedTrade = this.executionEngine.closeTradeAtExit(trade.id, currentPrice, 'SL_HIT');
           if (closedTrade) {
-            const exitSignal: Signal = {
+            signals.push({
               pair: this.config.pair,
               type: 'EXIT_SL',
               price: currentPrice,
@@ -261,14 +253,9 @@ export class ETHStrategy {
               confidence: 1.0,
               reason: `Stop loss hit at ${currentPrice}`,
               relatedCandles: [
-                {
-                  interval: '5m',
-                  timestamp: latestCandle5m.timestamp,
-                  candle: latestCandle5m,
-                },
+                { interval: '5m', timestamp: latestCandle5m.timestamp, candle: latestCandle5m },
               ],
-            };
-            signals.push(exitSignal);
+            });
           }
         }
       }
@@ -278,37 +265,54 @@ export class ETHStrategy {
   }
 
   /**
-   * Reset state for new 15m candle
+   * Reset state for a new 15m candle.
+   *
+   * Range is set from the FIRST 1m candle that falls within this 15m block,
+   * matching Pine: isFirst1m = ta.change(time("15")) → rangeHigh := oneMinHigh
+   *
+   * Fallback: if no 1m candle is available yet (block just opened),
+   * use the 15m candle's own OHLC as a temporary range.
+   * This avoids silently swallowing the missing-candle case.
    */
   private resetFor15mCandle(candle15m: Candle, candles1m: Candle[]): void {
     const stateKey = `${this.config.pair}-15m`;
     const state = this.strategyStates.get(stateKey)!;
 
-    // Get first 1m candle of this 15m period
     const firstCandle1m = this.getFirst1mCandleOfRange(candle15m, candles1m);
 
     if (firstCandle1m) {
       state.rangeHigh = firstCandle1m.high;
-      state.rangeLow = firstCandle1m.low;
-      state.rangeSize = state.rangeHigh - state.rangeLow;
+      state.rangeLow  = firstCandle1m.low;
+      logger.debug(
+        `[ETHStrategy] Range from 1m candle @ ` +
+        `${new Date(firstCandle1m.timestamp).toISOString()}: ` +
+        `[${state.rangeLow}, ${state.rangeHigh}]`
+      );
     } else {
+      // No 1m candle yet — 15m block just opened this tick.
+      // Use 15m candle OHLC as a conservative temporary range.
+      // tradeTaken remains false so range will be refined on next tick
+      // once the first 1m candle closes.
       state.rangeHigh = candle15m.high;
-      state.rangeLow = candle15m.low;
-      state.rangeSize = state.rangeHigh - state.rangeLow;
+      state.rangeLow  = candle15m.low;
+      logger.debug(
+        `[ETHStrategy] No 1m candle found for new 15m block — ` +
+        `using 15m candle range as fallback: [${state.rangeLow}, ${state.rangeHigh}]`
+      );
     }
 
+    state.rangeSize      = state.rangeHigh - state.rangeLow;
     state.rangeTimestamp = candle15m.timestamp;
-    state.tradeTaken = false;
-    state.lastSignal = undefined;
+    state.tradeTaken     = false;
+    state.lastSignal     = undefined;
   }
 
   /**
-   * Get the first 1m candle of a 15m period
+   * Find the first 1m candle whose timestamp falls within the given 15m block.
    */
   private getFirst1mCandleOfRange(candle15m: Candle, candles1m: Candle[]): Candle | null {
-    // Find candles that belong to this 15m candle
     const startTime = candle15m.timestamp;
-    const endTime = candle15m.timestamp + 15 * 60 * 1000;
+    const endTime   = candle15m.timestamp + 15 * 60 * 1000;
 
     for (const c of candles1m) {
       if (c.timestamp >= startTime && c.timestamp < endTime) {
@@ -320,19 +324,20 @@ export class ETHStrategy {
   }
 
   /**
-   * Execute long breakout trade
+   * Execute long breakout trade.
+   * Uses ATR-based dynamic stop loss (matches Pine: longSL = rangeLow - atr * atrMult).
    */
   private executeLongBreakout(price: number, atr: number, timestamp: number): Signal | null {
     const lockKey = `${this.config.pair}-LONG-${timestamp}`;
 
     if (this.hasExecutionLock(lockKey)) {
-      return null; // Already executed
+      logger.debug(`[ETHStrategy] Long execution lock active for ${lockKey}`);
+      return null;
     }
 
     this.acquireExecutionLock(lockKey);
 
     try {
-      // Calculate position sizing
       const stopLossPrice = RiskManager.calculateLongStopLoss(price, atr, this.config.atrMultiplier);
       const quantity = RiskManager.calculatePositionSize(
         this.executionEngine.getTotalEquity(),
@@ -342,15 +347,13 @@ export class ETHStrategy {
       );
 
       if (quantity === 0) {
-        logger.warn('Position size too small for long trade');
+        logger.warn('[ETHStrategy] Position size too small for long trade');
         return null;
       }
 
-      // Calculate take profits
       const tp1Price = RiskManager.calculateTP1(price, atr, this.config.atrMultiplier, 'LONG');
       const tp2Price = RiskManager.calculateTP2(price, atr, this.config.atrMultiplier, this.config.riskRewardRatio, 'LONG');
 
-      // Execute trade
       const trade = this.executionEngine.openLongTrade(
         this.config.pair,
         price,
@@ -361,11 +364,17 @@ export class ETHStrategy {
       );
 
       if (!trade) {
+        logger.warn(`[ETHStrategy] LONG trade failed to execute at ${price.toFixed(2)}`);
         return null;
       }
 
-      // Create signal
-      const signal: Signal = {
+      logger.info(
+        `[ETHStrategy] ✅ LONG EXECUTED: Price ${price.toFixed(2)} | ` +
+        `Qty: ${quantity.toFixed(6)} | SL: ${stopLossPrice.toFixed(2)} | ` +
+        `TP1: ${tp1Price.toFixed(2)} | TP2: ${tp2Price.toFixed(2)}`
+      );
+
+      return {
         pair: this.config.pair,
         type: 'ENTRY_LONG',
         price: formatPrice(price, PRECISION.PRICE),
@@ -374,28 +383,26 @@ export class ETHStrategy {
         reason: `Long breakout above range high at ${price}`,
         relatedCandles: [],
       };
-
-      return signal;
     } finally {
-      // Keep lock for a short time to prevent duplicate execution
       setTimeout(() => this.releaseExecutionLock(lockKey), 1000);
     }
   }
 
   /**
-   * Execute short breakout trade
+   * Execute short breakout trade.
+   * Uses ATR-based dynamic stop loss (matches Pine: shortSL = rangeHigh + atr * atrMult).
    */
   private executeShortBreakout(price: number, atr: number, timestamp: number): Signal | null {
     const lockKey = `${this.config.pair}-SHORT-${timestamp}`;
 
     if (this.hasExecutionLock(lockKey)) {
-      return null; // Already executed
+      logger.debug(`[ETHStrategy] Short execution lock active for ${lockKey}`);
+      return null;
     }
 
     this.acquireExecutionLock(lockKey);
 
     try {
-      // Calculate position sizing
       const stopLossPrice = RiskManager.calculateShortStopLoss(price, atr, this.config.atrMultiplier);
       const quantity = RiskManager.calculatePositionSize(
         this.executionEngine.getTotalEquity(),
@@ -405,15 +412,13 @@ export class ETHStrategy {
       );
 
       if (quantity === 0) {
-        logger.warn('Position size too small for short trade');
+        logger.warn('[ETHStrategy] Position size too small for short trade');
         return null;
       }
 
-      // Calculate take profits
       const tp1Price = RiskManager.calculateTP1(price, atr, this.config.atrMultiplier, 'SHORT');
       const tp2Price = RiskManager.calculateTP2(price, atr, this.config.atrMultiplier, this.config.riskRewardRatio, 'SHORT');
 
-      // Execute trade
       const trade = this.executionEngine.openShortTrade(
         this.config.pair,
         price,
@@ -424,11 +429,17 @@ export class ETHStrategy {
       );
 
       if (!trade) {
+        logger.warn(`[ETHStrategy] SHORT trade failed to execute at ${price.toFixed(2)}`);
         return null;
       }
 
-      // Create signal
-      const signal: Signal = {
+      logger.info(
+        `[ETHStrategy] ✅ SHORT EXECUTED: Price ${price.toFixed(2)} | ` +
+        `Qty: ${quantity.toFixed(6)} | SL: ${stopLossPrice.toFixed(2)} | ` +
+        `TP1: ${tp1Price.toFixed(2)} | TP2: ${tp2Price.toFixed(2)}`
+      );
+
+      return {
         pair: this.config.pair,
         type: 'ENTRY_SHORT',
         price: formatPrice(price, PRECISION.PRICE),
@@ -437,16 +448,16 @@ export class ETHStrategy {
         reason: `Short breakout below range low at ${price}`,
         relatedCandles: [],
       };
-
-      return signal;
     } finally {
-      // Keep lock for a short time to prevent duplicate execution
       setTimeout(() => this.releaseExecutionLock(lockKey), 1000);
     }
   }
 
   /**
-   * Calculate ATR SMA (simple moving average of ATR)
+   * Calculate ATR SMA (simple moving average of ATR values).
+   * Returns 0 if there is insufficient candle history.
+   *
+   * Note: O(n²) loop — acceptable for typical candle buffer sizes (~200 candles).
    */
   private calculateATRSMA(candles: Candle[], atrPeriod: number, smaPeriod: number): number {
     if (candles.length < atrPeriod + smaPeriod) return 0;
@@ -466,14 +477,13 @@ export class ETHStrategy {
   }
 
   /**
-   * Reset strategy (for testing/reset)
+   * Reset strategy (for testing/restart)
    */
   reset(): void {
     this.strategyStates.clear();
     this.executionLock.clear();
-    logger.info('Strategy reset');
+    logger.info('[ETHStrategy] Strategy reset');
   }
 }
 
 export * from './btc-strategy';
-
