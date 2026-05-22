@@ -40,7 +40,18 @@ export class BinanceWebSocket extends EventEmitter {
     return new Promise((resolve, reject) => {
       try {
         this.isIntentionallyClosed = false;
-        this.ws = new WebSocket(this.url);
+        
+        // Add headers to WebSocket connection
+        const headers = {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Cache-Control': 'no-cache',
+        };
+        
+        this.ws = new WebSocket(this.url, {
+          headers,
+          handshakeTimeout: 10000,
+        });
 
         this.ws.on('open', () => {
           logger.info(`WebSocket connected to ${this.url}`);
@@ -57,13 +68,23 @@ export class BinanceWebSocket extends EventEmitter {
           this.handleMessage(data);
         });
 
-        this.ws.on('error', (error) => {
-          logger.error(`WebSocket error: ${error.message}`);
+        this.ws.on('error', (error: any) => {
+          const errorMsg = error.message || JSON.stringify(error);
+          logger.error(`WebSocket error: ${errorMsg}`);
+          
+          // Log HTTP response code if available
+          if (error.statusCode) {
+            logger.error(`WebSocket HTTP status: ${error.statusCode}`);
+            if (error.statusCode === 451) {
+              logger.error('HTTP 451: Connection blocked by Binance (IP may be rate-limited or blocked)');
+            }
+          }
+          
           this.emit('error', error);
         });
 
-        this.ws.on('close', () => {
-          logger.warn('WebSocket closed');
+        this.ws.on('close', (code, reason) => {
+          logger.warn(`WebSocket closed with code ${code}: ${reason}`);
           this.stopHeartbeat();
           this.emit('disconnected');
           if (!this.isIntentionallyClosed) {
@@ -77,7 +98,7 @@ export class BinanceWebSocket extends EventEmitter {
             reject(new Error('WebSocket connection timeout'));
             if (this.ws) this.ws.close();
           }
-        }, 5000);
+        }, 10000);
       } catch (error) {
         reject(error);
       }
