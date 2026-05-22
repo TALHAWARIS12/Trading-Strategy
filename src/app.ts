@@ -147,8 +147,16 @@ async function connectWebSocket(): Promise<void> {
  * Main processing loop
  */
 async function processingLoop(): Promise<void> {
+  let loopCounter = 0;
   updateInterval = setInterval(async () => {
     try {
+      loopCounter++;
+      // Log every 60 loops (every 5 minutes at 5s intervals) to track activity
+      const shouldLogStatus = loopCounter % 60 === 0;
+      if (shouldLogStatus) {
+        logger.info(`⏱️ Processing loop tick #${loopCounter} - checking for trading signals...`);
+      }
+
       // Process strategy for each pair
       for (const pair of config.tradingPairs) {
         if (pair === 'BTCUSDT') {
@@ -158,6 +166,9 @@ async function processingLoop(): Promise<void> {
           const candles15m = candleBuilder.getCandles(pair, '15m', 100);
 
           if (candles3m.length === 0 || candles15m.length === 0) {
+            if (shouldLogStatus) {
+              logger.debug(`[BTC] Insufficient candles: 3m=${candles3m.length}, 15m=${candles15m.length}`);
+            }
             continue; // Not enough data
           }
 
@@ -184,6 +195,9 @@ async function processingLoop(): Promise<void> {
           const candles15m = candleBuilder.getCandles(pair, '15m', 100);
 
           if (candles5m.length === 0 || candles15m.length === 0) {
+            if (shouldLogStatus) {
+              logger.debug(`[ETH] Insufficient candles: 5m=${candles5m.length}, 15m=${candles15m.length}`);
+            }
             continue; // Not enough data
           }
 
@@ -242,6 +256,7 @@ async function start(): Promise<void> {
 
     // Step 3: Start monitoring
     healthMonitor.start(30000);
+    logger.info('Health monitor started');
 
     // Step 4: Connect WebSocket in background — never kill the process on WS failure
     connectWebSocketWithRetry();
@@ -250,7 +265,7 @@ async function start(): Promise<void> {
     await processingLoop();
 
     isRunning = true;
-    logger.info('Bot started successfully');
+    logger.info('✅ Bot startup complete - trading strategy active');
 
     // Save state periodically
     setInterval(async () => {
@@ -278,10 +293,10 @@ function connectWebSocketWithRetry(attempt = 1): void {
 
   connectWebSocket()
     .then(() => {
-      logger.info('WebSocket connected on attempt ' + attempt);
+      logger.info(`✅ WebSocket connected successfully on attempt ${attempt}`);
     })
     .catch((err) => {
-      logger.warn(`WebSocket connection attempt ${attempt} failed: ${err.message} — retrying in ${delay / 1000}s`);
+      logger.warn(`⚠️ WebSocket connection attempt ${attempt} failed: ${err.message} — retrying in ${delay / 1000}s`);
       setTimeout(() => connectWebSocketWithRetry(attempt + 1), delay);
     });
 }

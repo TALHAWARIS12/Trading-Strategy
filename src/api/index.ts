@@ -251,7 +251,7 @@ export class APIServer {
   }
 
   async start(): Promise<void> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const app = express();
 
       // Middleware
@@ -283,10 +283,21 @@ export class APIServer {
       });
 
       // Start server
-      app.listen(this.config.port, () => {
+      const server = app.listen(this.config.port, () => {
         logger.info(`API server started on port ${this.config.port}`);
         this.app = app;
         resolve();
+      });
+
+      // Handle port already in use error
+      server.on('error', (error: any) => {
+        if (error.code === 'EADDRINUSE') {
+          logger.error(`Port ${this.config.port} is already in use`);
+          reject(new Error(`Port ${this.config.port} is already in use`));
+        } else {
+          logger.error(`Server startup error: ${error.message}`);
+          reject(error);
+        }
       });
     });
   }

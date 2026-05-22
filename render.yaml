@@ -48,7 +48,7 @@ services:
 
       # ── Logging ───────────────────────────────────────────────
       - key: LOG_LEVEL
-        value: info
+        value: debug
 
       - key: LOG_PATH
         value: ./logs
