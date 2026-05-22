@@ -141,9 +141,16 @@ export class ETHStrategy {
     const isVolatilityHigh = indicators.atr_15m > indicators.atrSma_15m;
 
     if (!isVolatilityHigh) {
-      logger.debug(`Volatility too low: ATR ${indicators.atr_15m} < ATR_SMA ${indicators.atrSma_15m}`);
+      logger.debug(`Volatility too low: ATR ${indicators.atr_15m.toFixed(2)} < ATR_SMA ${indicators.atrSma_15m.toFixed(2)}`);
       return signals;
     }
+
+    // Debug: Log all trading conditions
+    logger.debug(
+      `[ETHStrategy] Price ${currentPrice.toFixed(2)} | Range [${state.rangeLow.toFixed(2)}, ${state.rangeHigh.toFixed(2)}] | ` +
+      `Trend: ${isBullTrend ? 'BULL' : 'BEAR'} (EMA50: ${indicators.ema50_15m.toFixed(2)} vs EMA200: ${indicators.ema200_15m.toFixed(2)}) | ` +
+      `Vol: ${isVolatilityHigh ? 'HIGH' : 'LOW'} | TradeTaken: ${state.tradeTaken}`
+    );
 
     // 3. Check for breakout and execute trades
     if (!state.tradeTaken) {

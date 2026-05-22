@@ -159,8 +159,10 @@ export class BTCStrategy {
             this._lockExecution();
 
             logger.info(
-              `[BTCStrategy] LONG executed: Price ${currentPrice.toFixed(2)} > Range ${this.state.rangeHigh.toFixed(2)} | SL ${stopLossPrice.toFixed(2)} | TP2 ${tp2Price.toFixed(2)}`
+              `[BTCStrategy] ✅ LONG EXECUTED: Price ${currentPrice.toFixed(2)} > Range ${this.state.rangeHigh.toFixed(2)} | Qty: ${quantity.toFixed(6)} | SL ${stopLossPrice.toFixed(2)} | TP2 ${tp2Price.toFixed(2)}`
             );
+          } else {
+            logger.warn(`[BTCStrategy] LONG trade failed to execute at price ${currentPrice.toFixed(2)}`);
           }
         } else {
           logger.warn('[BTCStrategy] Position size too small for long trade');
@@ -213,8 +215,10 @@ export class BTCStrategy {
             this._lockExecution();
 
             logger.info(
-              `[BTCStrategy] SHORT executed: Price ${currentPrice.toFixed(2)} < Range ${this.state.rangeLow.toFixed(2)} | SL ${stopLossPrice.toFixed(2)} | TP2 ${tp2Price.toFixed(2)}`
+              `[BTCStrategy] ✅ SHORT EXECUTED: Price ${currentPrice.toFixed(2)} < Range ${this.state.rangeLow.toFixed(2)} | Qty: ${quantity.toFixed(6)} | SL ${stopLossPrice.toFixed(2)} | TP2 ${tp2Price.toFixed(2)}`
             );
+          } else {
+            logger.warn(`[BTCStrategy] SHORT trade failed to execute at price ${currentPrice.toFixed(2)}`);
           }
         } else {
           logger.warn('[BTCStrategy] Position size too small for short trade');
