@@ -222,27 +222,31 @@ async function processingLoop(): Promise<void> {
  * Start the bot
  */
 async function start(): Promise<void> {
+  if (isRunning) {
+    logger.warn('Bot already running');
+    return;
+  }
+
+  logger.info('Starting bot...');
+
   try {
-    if (isRunning) {
-      logger.warn('Bot already running');
-      return;
-    }
-
-    logger.info('Starting bot...');
-
+    // Step 1: Initialize core (DB, strategies, portfolio)
     await initialize();
-    await connectWebSocket();
 
-    // Start API server once per process lifetime
+    // Step 2: Start API server IMMEDIATELY so Render health check passes
     if (!isApiServerStarted) {
       await apiServer.start();
       isApiServerStarted = true;
+      logger.info('API server is up — ready to serve health checks');
     }
 
-    // Start monitoring
+    // Step 3: Start monitoring
     healthMonitor.start(30000);
 
-    // Start processing loop
+    // Step 4: Connect WebSocket in background — never kill the process on WS failure
+    connectWebSocketWithRetry();
+
+    // Step 5: Start the processing loop
     await processingLoop();
 
     isRunning = true;
@@ -257,12 +261,29 @@ async function start(): Promise<void> {
       } catch (error) {
         logger.warn(`Failed to save state: ${error}`);
       }
-    }, 60000); // Every minute
+    }, 60000);
   } catch (error) {
     logger.error(`Failed to start bot: ${error}`);
-    await stop();
+    // Only exit if core init failed (DB / API server)
     process.exit(1);
   }
+}
+
+/**
+ * Connect WebSocket with automatic retry — non-fatal, runs in background
+ */
+function connectWebSocketWithRetry(attempt = 1): void {
+  const maxDelay = 60000;
+  const delay = Math.min(5000 * attempt, maxDelay);
+
+  connectWebSocket()
+    .then(() => {
+      logger.info('WebSocket connected on attempt ' + attempt);
+    })
+    .catch((err) => {
+      logger.warn(`WebSocket connection attempt ${attempt} failed: ${err.message} — retrying in ${delay / 1000}s`);
+      setTimeout(() => connectWebSocketWithRetry(attempt + 1), delay);
+    });
 }
 
 /**
