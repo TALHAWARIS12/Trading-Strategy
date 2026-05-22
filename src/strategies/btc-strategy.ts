@@ -109,6 +109,11 @@ export class BTCStrategy {
     const shortBreakout =
       !this.state.tradeTaken && currentPrice < this.state.rangeLow;
 
+    // Debug: Log price vs range every candle
+    logger.debug(
+      `[BTCStrategy] Price ${currentPrice.toFixed(2)} vs Range [${this.state.rangeLow?.toFixed(2)}, ${this.state.rangeHigh?.toFixed(2)}] | Long: ${longBreakout}, Short: ${shortBreakout}`
+    );
+
     // Long breakout
     if (longBreakout && !this.state.signalLocked) {
       const riskPrice = currentPrice - this.state.rangeLow;
