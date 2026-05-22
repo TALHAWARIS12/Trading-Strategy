@@ -309,6 +309,7 @@ async function stop(): Promise<void> {
     logger.info('Stopping bot...');
 
     isRunning = false;
+    isInitialized = false;
 
     // Stop processing loop
     if (updateInterval) {
@@ -316,21 +317,45 @@ async function stop(): Promise<void> {
       updateInterval = null;
     }
 
+    // Stop monitoring
+    healthMonitor.stop();
+
+    // Stop API server
+    if (apiServer) {
+      try {
+        await apiServer.stop();
+      } catch (err) {
+        logger.warn(`Error stopping API server: ${err}`);
+      }
+    }
+
     // Save state
     if (executionEngine) {
-      await recoveryManager.saveState(executionEngine);
+      try {
+        await recoveryManager.saveState(executionEngine);
+      } catch (err) {
+        logger.warn(`Failed to save state during shutdown: ${err}`);
+      }
     }
 
     // Disconnect WebSocket
     if (wsClient) {
-      wsClient.disconnect();
+      try {
+        wsClient.disconnect();
+      } catch (err) {
+        logger.warn(`Error disconnecting WebSocket: ${err}`);
+      }
       wsClient = null;
     }
 
-    // Stop monitoring
-    healthMonitor.stop();
+    // Close database
+    try {
+      await database.close();
+    } catch (err) {
+      logger.warn(`Error closing database: ${err}`);
+    }
 
-    logger.info('Bot stopped');
+    logger.info('✅ Bot stopped cleanly');
   } catch (error) {
     logger.error(`Error stopping bot: ${error}`);
   }
@@ -342,22 +367,29 @@ async function stop(): Promise<void> {
 process.on('SIGINT', async () => {
   logger.info('Received SIGINT - shutting down gracefully');
   await stop();
-  await database.close().catch(() => {});
-  process.exit(0);
+  // Give 2 seconds for cleanup, then force exit
+  setTimeout(() => {
+    logger.warn('Force exiting after 2 second timeout');
+    process.exit(0);
+  }, 2000);
 });
 
 process.on('SIGTERM', async () => {
   logger.info('Received SIGTERM - shutting down gracefully');
   await stop();
-  await database.close().catch(() => {});
-  process.exit(0);
+  // Give 2 seconds for cleanup, then force exit
+  setTimeout(() => {
+    logger.warn('Force exiting after 2 second timeout');
+    process.exit(0);
+  }, 2000);
 });
 
 process.on('uncaughtException', (error) => {
   logger.error(`Uncaught exception: ${error}`);
   stop().then(async () => {
-    await database.close().catch(() => {});
-    process.exit(1);
+    setTimeout(() => {
+      process.exit(1);
+    }, 1000);
   });
 });
 

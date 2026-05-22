@@ -24,6 +24,7 @@ export class APIServer {
   private router: Router;
   private config: APIServerConfig;
   private app: express.Application | null = null;
+  private server: any = null;
 
   constructor(config: APIServerConfig) {
     this.config = config;
@@ -283,14 +284,14 @@ export class APIServer {
       });
 
       // Start server
-      const server = app.listen(this.config.port, () => {
+      this.server = app.listen(this.config.port, () => {
         logger.info(`API server started on port ${this.config.port}`);
         this.app = app;
         resolve();
       });
 
       // Handle port already in use error
-      server.on('error', (error: any) => {
+      this.server.on('error', (error: any) => {
         if (error.code === 'EADDRINUSE') {
           logger.error(`Port ${this.config.port} is already in use`);
           reject(new Error(`Port ${this.config.port} is already in use`));
@@ -303,7 +304,24 @@ export class APIServer {
   }
 
   async stop(): Promise<void> {
-    // Express doesn't have a built-in stop method, but this is here for API consistency
-    logger.info('API server stop requested');
+    return new Promise((resolve) => {
+      if (this.server) {
+        logger.info('Closing API server...');
+        this.server.close(() => {
+          this.app = null;
+          this.server = null;
+          logger.info('API server closed');
+          resolve();
+        });
+        
+        // Force close after 5 seconds
+        setTimeout(() => {
+          logger.warn('Force closing API server');
+          resolve();
+        }, 5000);
+      } else {
+        resolve();
+      }
+    });
   }
 }
