@@ -1,0 +1,95 @@
+services:
+  - type: web
+    name: trading-strategy-bot
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    region: oregon
+    plan: starter
+
+    # Health check endpoint
+    healthCheckPath: /api/health
+
+    # Environment variables — fill in real values in the Render dashboard
+    envVars:
+      # ── Binance ────────────────────────────────────────────────
+      - key: BINANCE_API_KEY
+        sync: false          # set manually in dashboard
+
+      - key: BINANCE_API_SECRET
+        sync: false
+
+      - key: BINANCE_WS_URL
+        value: wss://stream.binance.com:9443/ws
+
+      # ── Trading Pairs ──────────────────────────────────────────
+      - key: TRADING_PAIRS
+        value: BTCUSDT,ETHUSDT,SOLUSDT
+
+      # ── Strategy ──────────────────────────────────────────────
+      - key: PAPER_BALANCE
+        value: "10000"
+
+      - key: RISK_PERCENT
+        value: "1"
+
+      - key: RISK_REWARD_RATIO
+        value: "2"
+
+      - key: ATR_MULTIPLIER
+        value: "1.5"
+
+      # ── Intervals ─────────────────────────────────────────────
+      - key: INTERVALS
+        value: 1m,3m,5m,15m
+
+      # ── Database ──────────────────────────────────────────────
+      - key: DATABASE_PATH
+        value: ./data/trading.db
+
+      # ── Logging ───────────────────────────────────────────────
+      - key: LOG_LEVEL
+        value: info
+
+      - key: LOG_PATH
+        value: ./logs
+
+      # ── Server ────────────────────────────────────────────────
+      - key: PORT
+        value: "3000"
+
+      - key: NODE_ENV
+        value: production
+
+      # ── Trading Params ────────────────────────────────────────
+      - key: BTC_ENABLED
+        value: "true"
+
+      - key: ETH_ENABLED
+        value: "true"
+
+      - key: SOL_ENABLED
+        value: "true"
+
+      # ── Risk Management ───────────────────────────────────────
+      - key: MAX_DAILY_LOSS_PERCENT
+        value: "5"
+
+      - key: MAX_CONCURRENT_TRADES
+        value: "3"
+
+      # ── Backtesting ───────────────────────────────────────────
+      - key: BACKTEST_START_DATE
+        value: "2024-01-01"
+
+      - key: BACKTEST_END_DATE
+        value: "2024-12-31"
+
+      - key: BACKTEST_PAIR
+        value: ETHUSDT
+
+      # ── AI Reasoning ──────────────────────────────────────────
+      - key: OPENAI_API_KEY
+        sync: false          # set manually in dashboard
+
+      - key: OPENAI_MODEL
+        value: gpt-4o-mini

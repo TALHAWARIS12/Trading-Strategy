@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title> Crypto Trading Bot Dashboard</title>
+  <!-- Outfit & Inter Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap"
+    rel="stylesheet">
+  <!-- Stylesheet link -->
+  <link rel="stylesheet" href="style.css">
+  <!-- Lucide Icons for premium feel -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+
+<body>
+  <!-- Ambient background glow spots -->
+  <div class="bg-glow bg-glow-1"></div>
+  <div class="bg-glow bg-glow-2"></div>
+  <div class="bg-glow bg-glow-3"></div>
+
+  <div class="app-container">
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-logo">
+          <i data-lucide="zap" class="logo-icon"></i>
+        </div>
+        <div class="brand-text">
+          <h2>Trading</h2>
+          <span>PAPER TRADING</span>
+        </div>
+      </div>
+
+      <nav class="sidebar-nav">
+        <a href="#" class="nav-item active" id="nav-dashboard">
+          <i data-lucide="layout-dashboard"></i>
+          <span>Dashboard</span>
+        </a>
+        <a href="#positions-section" class="nav-item" id="nav-positions">
+          <i data-lucide="layers"></i>
+          <span>Open Positions</span>
+        </a>
+        <a href="#trades-section" class="nav-item" id="nav-trades">
+          <i data-lucide="history"></i>
+          <span>Trade History</span>
+        </a>
+        <a href="#ai-reasoning-section" class="nav-item" id="nav-ai-insights">
+          <i data-lucide="brain-circuit"></i>
+          <span>AI Insights</span>
+        </a>
+        <a href="#terminal-section" class="nav-item" id="nav-terminal">
+          <i data-lucide="terminal"></i>
+          <span>Terminal Logs</span>
+        </a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="bot-status-compact">
+          <div class="pulse-dot status-online"></div>
+          <div class="status-details">
+            <span class="status-label">Bot Status</span>
+            <span class="status-val" id="compact-status">Running</span>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <!-- Top header bar -->
+      <header class="top-bar">
+        <div class="header-title">
+          <h1>Trading Engine Terminal</h1>
+          <p class="subtitle">Binance Spot Testnet Live Price Integration</p>
+        </div>
+
+        <div class="status-indicator-bar">
+          <div class="status-pill env-pill">
+            <i data-lucide="cpu"></i>
+            <span id="env-mode">DEVELOPMENT MODE</span>
+          </div>
+          <div class="status-pill ws-pill" id="ws-status-pill">
+            <div class="pulse-dot" id="ws-status-dot"></div>
+            <span>WebSocket:</span>
+            <span id="ws-status-text" class="status-text">Connecting</span>
+          </div>
+          <div class="status-pill health-pill" id="health-status-pill">
+            <i data-lucide="shield-check" class="health-icon"></i>
+            <span>Health:</span>
+            <span id="health-status-text" class="status-text">Good</span>
+          </div>
+        </div>
+      </header>
+
+      <!-- Dashboard Dashboard Tab -->
+      <div class="tab-content" id="dashboard-tab">
+        <!-- Main Stats Overview -->
+        <section class="metrics-grid">
+          <!-- Total Balance Card -->
+          <div class="metric-card glass-card card-glow-cyan">
+            <div class="card-header">
+              <span>Total Equity</span>
+              <div class="card-icon cyan-bg"><i data-lucide="wallet"></i></div>
+            </div>
+            <div class="card-value" id="metric-balance">$10,000.00</div>
+            <div class="card-footer">
+              <span class="trend trend-neutral" id="metric-pnl-percent">0.00%</span>
+              <span class="footer-label">overall change</span>
+            </div>
+          </div>
+
+          <!-- Realized Profit Card -->
+          <div class="metric-card glass-card card-glow-green">
+            <div class="card-header">
+              <span>Realized PnL</span>
+              <div class="card-icon green-bg"><i data-lucide="trending-up"></i></div>
+            </div>
+            <div class="card-value" id="metric-realized-pnl">$0.00</div>
+            <div class="card-footer">
+              <span class="footer-label">From closed paper trades</span>
+            </div>
+          </div>
+
+          <!-- Unrealized Profit Card -->
+          <div class="metric-card glass-card card-glow-orange">
+            <div class="card-header">
+              <span>Unrealized PnL</span>
+              <div class="card-icon orange-bg"><i data-lucide="activity"></i></div>
+            </div>
+            <div class="card-value" id="metric-unrealized-pnl">$0.00</div>
+            <div class="card-footer">
+              <span class="footer-label">Current open positions</span>
+            </div>
+          </div>
+
+          <!-- Win Rate Card -->
+          <div class="metric-card glass-card card-glow-purple">
+            <div class="card-header">
+              <span>Win Rate</span>
+              <div class="card-icon purple-bg"><i data-lucide="award"></i></div>
+            </div>
+            <div class="card-value" id="metric-win-rate">0.0%</div>
+            <div class="card-footer">
+              <span class="footer-label" id="metric-total-trades">0 total trades</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- Advanced Performance Grid -->
+        <section class="performance-section">
+          <div class="glass-card performance-card">
+            <div class="section-title">
+              <h2><i data-lucide="bar-chart-3"></i> Advanced Statistics</h2>
+              <span class="badge">Simulated Metrics</span>
+            </div>
+            <div class="performance-metrics">
+              <div class="perf-item">
+                <span class="perf-label">Max Drawdown</span>
+                <span class="perf-val" id="metric-drawdown">0.00%</span>
+              </div>
+              <div class="perf-item">
+                <span class="perf-label">Sharpe Ratio</span>
+                <span class="perf-val" id="metric-sharpe">0.00%</span>
+              </div>
+              <div class="perf-item">
+                <span class="perf-label">Profit Factor</span>
+                <span class="perf-val" id="metric-profit-factor">0.00</span>
+              </div>
+              <div class="perf-item">
+                <span class="perf-label">Open Positions</span>
+                <span class="perf-val" id="metric-open-count">0</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="glass-card controls-card">
+            <div class="section-title">
+              <h2><i data-lucide="sliders"></i> Simulation Operations</h2>
+            </div>
+            <div class="controls-grid">
+              <button class="btn btn-primary" id="btn-start">
+                <i data-lucide="play"></i>
+                <span>Start Paper Bot</span>
+              </button>
+              <button class="btn btn-secondary" id="btn-stop">
+                <i data-lucide="square"></i>
+                <span>Stop Paper Bot</span>
+              </button>
+              <div class="input-action-group">
+                <input type="number" id="reset-balance-input" value="10000" min="100" max="1000000" step="500">
+                <button class="btn btn-danger" id="btn-reset">
+                  <i data-lucide="refresh-cw"></i>
+                  <span>Reset Paper Account</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Open Positions Section -->
+        <section class="dashboard-section" id="positions-section">
+          <div class="section-header">
+            <h2><i data-lucide="layers" class="section-icon"></i> Open Positions</h2>
+            <span class="positions-counter badge-accent" id="positions-count-badge">0 Active</span>
+          </div>
+          <div class="glass-card table-container">
+            <table class="premium-table" id="positions-table">
+              <thead>
+                <tr>
+                  <th>Pair</th>
+                  <th>Side</th>
+                  <th>Quantity</th>
+                  <th>Entry Price</th>
+                  <th>Current Price</th>
+                  <th>Stop Loss</th>
+                  <th>Take Profit 1</th>
+                  <th>Take Profit 2</th>
+                  <th>Unrealized PnL</th>
+                </tr>
+              </thead>
+              <tbody id="positions-table-body">
+                <tr>
+                  <td colspan="9" class="empty-state">
+                    <i data-lucide="inbox"></i>
+                    <p>No active open positions. Watching for strategy breakout triggers...</p>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- Historical Ledger Section -->
+        <section class="dashboard-section" id="trades-section">
+          <div class="section-header">
+            <h2><i data-lucide="history" class="section-icon"></i> Recent Trade Logs</h2>
+            <span class="badge" id="trades-count-badge">0 Closed</span>
+          </div>
+          <div class="glass-card table-container">
+            <table class="premium-table" id="trades-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Pair</th>
+                  <th>Side</th>
+                  <th>Entry Price</th>
+                  <th>Quantity</th>
+                  <th>Exit Price</th>
+                  <th>Exit Time</th>
+                  <th>Reason</th>
+                  <th>PnL ($ / %)</th>
+                </tr>
+              </thead>
+              <tbody id="trades-table-body">
+                <tr>
+                  <td colspan="9" class="empty-state">
+                    <i data-lucide="inbox"></i>
+                    <p>No historical trades found in trading.db. Run the bot to place trades!</p>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- AI Reasoning Center Section -->
+        <section class="dashboard-section" id="ai-reasoning-section">
+          <div class="section-header">
+            <h2><i data-lucide="brain-circuit" class="section-icon text-cyan"></i> AI Trade Reasoning Center</h2>
+            <span class="badge" id="ai-reasoning-status-badge" style="background: rgba(255, 255, 255, 0.05); color: var(--text-muted); border: 1px solid var(--border-color);">Ready</span>
+            <div class="input-action-group" style="margin-left: auto; margin-top: 0; display: flex; align-items: center; gap: 8px;">
+              <span class="footer-label" style="font-size: 12px; white-space: nowrap;">Select Trade:</span>
+              <select id="ai-trade-selector" class="premium-select" style="background: rgba(0, 0, 0, 0.3); border: 1px solid var(--border-color); border-radius: 8px; padding: 6px 12px; color: var(--text-primary); font-family: var(--font-secondary); outline: none; font-size: 12px; cursor: pointer; transition: var(--card-transition);">
+                <option value="">-- Click a trade row or select here --</option>
+              </select>
+            </div>
+          </div>
+          
+          <div class="glass-card ai-reasoning-card card-glow-cyan" style="position: relative; overflow: hidden; padding: 24px; min-height: 200px;">
+            <!-- Glowing background effect inside the card -->
+            <div class="ai-glow-spot"></div>
+
+            <!-- Loader (Hidden by default) -->
+            <div id="ai-loader" class="ai-loader-container" style="display: none; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 40px 20px;">
+              <div class="loader-pulse">
+                <i data-lucide="brain-circuit" class="ai-loader-icon" style="width: 42px; height: 42px; color: var(--accent-cyan);"></i>
+              </div>
+              <p class="loader-text" style="font-size: 15px; font-weight: 600; margin-top: 16px; color: var(--text-primary);">Consulting Technical Analyst AI (GPT-5.4-mini)...</p>
+              <span class="loader-subtext" style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">Evaluating range sweeps, EMAs, and risk structures</span>
+            </div>
+
+            <!-- Empty State -->
+            <div id="ai-empty-state" class="empty-state">
+              <i data-lucide="brain-circuit" style="color: rgba(0, 242, 254, 0.15); width: 48px; height: 48px; margin-bottom: 16px;"></i>
+              <p style="font-size: 15px; font-weight: 500; color: var(--text-primary); margin-bottom: 6px;">AI Trade Insights Ready</p>
+              <p style="max-width: 420px; margin: 0 auto; color: var(--text-muted); font-size: 13px;">Click on any trade row in the <strong>Recent Trade Logs</strong> ledger above, or select a trade ID from the dropdown, to generate professional machine-learning explanations.</p>
+            </div>
+
+            <!-- Main Content Container (Hidden by default) -->
+            <div id="ai-content-container" style="display: none; flex-direction: column; gap: 24px;">
+              <!-- Trade Summary Header inside the AI card -->
+              <div class="ai-trade-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px; border-bottom: 1px solid var(--border-color); padding-bottom: 16px;">
+                <div style="display: flex; align-items: center; gap: 12px;">
+                  <span id="ai-trade-pair" class="text-bold" style="font-size: 18px; color: var(--accent-cyan);">BTCUSDT</span>
+                  <span id="ai-trade-side" class="side-badge">LONG</span>
+                  <span id="ai-trade-id-label" class="badge" style="font-family: monospace;">ID: --</span>
+                </div>
+                <div class="ai-summary-details" style="display: flex; gap: 16px; font-family: var(--font-secondary); font-size: 13px; flex-wrap: wrap;">
+                  <div><span style="color: var(--text-muted);">Entry:</span> <strong id="ai-trade-entry-price">$0.00</strong></div>
+                  <div><span style="color: var(--text-muted);">Exit:</span> <strong id="ai-trade-exit-price">$0.00</strong></div>
+                  <div><span style="color: var(--text-muted);">PnL:</span> <strong id="ai-trade-pnl" class="text-green">$0.00 (0.00%)</strong></div>
+                </div>
+              </div>
+
+              <!-- AI Grid breakdown -->
+              <div class="ai-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 20px;">
+                <!-- Section 1 -->
+                <div class="ai-subcard" style="background: rgba(255, 255, 255, 0.015); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 12px; transition: var(--card-transition);">
+                  <div style="display: flex; align-items: center; gap: 10px; border-bottom: 1px solid rgba(255,255,255,0.04); padding-bottom: 10px;">
+                    <div style="width: 32px; height: 32px; border-radius: 8px; background: rgba(0, 242, 254, 0.1); border: 1px solid rgba(0, 242, 254, 0.2); display: flex; align-items: center; justify-content: center; color: var(--accent-cyan);">
+                      <i data-lucide="brain"></i>
+                    </div>
+                    <h3 style="font-size: 14px; font-weight: 700; color: var(--text-primary);">Setup & Justification</h3>
+                  </div>
+                  <div id="ai-section-setup" class="ai-text-content" style="font-size: 13px; line-height: 1.6; color: var(--text-muted);">
+                    Waiting for analysis...
+                  </div>
+                </div>
+
+                <!-- Section 2 -->
+                <div class="ai-subcard" style="background: rgba(255, 255, 255, 0.015); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 12px; transition: var(--card-transition);">
+                  <div style="display: flex; align-items: center; gap: 10px; border-bottom: 1px solid rgba(255,255,255,0.04); padding-bottom: 10px;">
+                    <div style="width: 32px; height: 32px; border-radius: 8px; background: rgba(139, 92, 246, 0.1); border: 1px solid rgba(139, 92, 246, 0.2); display: flex; align-items: center; justify-content: center; color: var(--accent-purple);">
+                      <i data-lucide="shield-alert"></i>
+                    </div>
+                    <h3 style="font-size: 14px; font-weight: 700; color: var(--text-primary);">Risk/Reward Dynamics</h3>
+                  </div>
+                  <div id="ai-section-risk" class="ai-text-content" style="font-size: 13px; line-height: 1.6; color: var(--text-muted);">
+                    Waiting for analysis...
+                  </div>
+                </div>
+
+                <!-- Section 3 -->
+                <div class="ai-subcard" style="background: rgba(255, 255, 255, 0.015); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 12px; transition: var(--card-transition);">
+                  <div style="display: flex; align-items: center; gap: 10px; border-bottom: 1px solid rgba(255,255,255,0.04); padding-bottom: 10px;">
+                    <div style="width: 32px; height: 32px; border-radius: 8px; background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.2); display: flex; align-items: center; justify-content: center; color: var(--accent-green);">
+                      <i data-lucide="sparkles"></i>
+                    </div>
+                    <h3 style="font-size: 14px; font-weight: 700; color: var(--text-primary);">Outcome & Key Takeaways</h3>
+                  </div>
+                  <div id="ai-section-outcome" class="ai-text-content" style="font-size: 13px; line-height: 1.6; color: var(--text-muted);">
+                    Waiting for analysis...
+                  </div>
+                </div>
+              </div>
+
+              <!-- Raw text toggle -->
+              <div style="display: flex; justify-content: flex-end; border-top: 1px solid var(--border-color); padding-top: 14px;">
+                <button id="btn-show-raw-ai" class="btn-clear-terminal" style="display: flex; align-items: center; gap: 6px;">
+                  <i data-lucide="text"></i> Show Raw Response
+                </button>
+              </div>
+
+              <div id="ai-raw-response-container" style="display: none; padding: 16px; background: rgba(0,0,0,0.4); border: 1px solid var(--border-color); border-radius: 8px; font-family: monospace; font-size: 11.5px; line-height: 1.5; color: var(--text-muted); white-space: pre-wrap;">
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- System Terminal Console Section -->
+        <section class="dashboard-section" id="terminal-section">
+          <div class="section-header">
+            <h2><i data-lucide="terminal" class="section-icon"></i> System Terminal</h2>
+            <div class="terminal-controls">
+              <span class="badge" id="terminal-lines-badge">0 Lines</span>
+              <button class="btn-clear-terminal" id="btn-clear-terminal">
+                <i data-lucide="trash-2"></i> Clear Screen
+              </button>
+            </div>
+          </div>
+          <div class="glass-card terminal-card">
+            <div class="terminal-header">
+              <div class="terminal-buttons">
+                <span class="dot red"></span>
+                <span class="dot yellow"></span>
+                <span class="dot green"></span>
+              </div>
+              <div class="terminal-title">antigravity@trading-engine:~/combined.log</div>
+              <div class="terminal-action">
+                <i data-lucide="refresh-cw" class="terminal-spin-icon" id="terminal-refresh-icon"></i>
+              </div>
+            </div>
+            <div class="terminal-body" id="terminal-body">
+              <div class="terminal-line system-msg">Initializing terminal feed...</div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <footer class="app-footer">
+    <p>Powered by <span> Engine</span> &bull; Spot Testnet Headless Sandbox Client</p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+
+</html>
