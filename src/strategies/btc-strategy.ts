@@ -100,6 +100,7 @@ export class BTCStrategy {
 
     // Only process if we have a valid range
     if (this.state.rangeHigh === null || this.state.rangeLow === null) {
+      logger.debug(`[BTCStrategy] Waiting for initial range setup. Current price: ${currentPrice.toFixed(2)}`);
       return signals;
     }
 
@@ -109,9 +110,9 @@ export class BTCStrategy {
     const shortBreakout =
       !this.state.tradeTaken && currentPrice < this.state.rangeLow;
 
-    // Debug: Log price vs range every candle
-    logger.debug(
-      `[BTCStrategy] Price ${currentPrice.toFixed(2)} vs Range [${this.state.rangeLow?.toFixed(2)}, ${this.state.rangeHigh?.toFixed(2)}] | Long: ${longBreakout}, Short: ${shortBreakout}`
+    // Log price vs range every candle (info level for visibility)
+    logger.info(
+      `[BTCStrategy] Price ${currentPrice.toFixed(2)} vs Range [${this.state.rangeLow?.toFixed(2)}, ${this.state.rangeHigh?.toFixed(2)}] | Breakout: Long=${longBreakout}, Short=${shortBreakout}, Locked=${this.state.signalLocked}`
     );
 
     // Long breakout
