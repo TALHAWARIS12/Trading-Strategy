@@ -87,7 +87,7 @@ describe('ExecutionEngine', () => {
 
   it('should calculate performance metrics', () => {
     executionEngine.openLongTrade('ETHUSDT', 2000, 1, 1950, 2050, 2100);
-    executionEngine.openShortTrade('ETHUSDT', 2000, 1, 2050, 1950, 1900);
+    executionEngine.openShortTrade('BTCUSDT', 2000, 1, 2050, 1950, 1900);
 
     const metrics = executionEngine.getPerformanceMetrics();
     expect(metrics.totalTrades).toBe(2);

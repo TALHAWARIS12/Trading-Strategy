@@ -71,6 +71,16 @@ export class RiskManager {
     // Apply precision
     positionSize = formatQuantity(positionSize, PRECISION.QUANTITY);
 
+    // Cap position size to maximum affordable size based on equity
+    const maxPositionSize = this.getMaxPositionSize(equity, entryPrice);
+    if (positionSize > maxPositionSize) {
+      logger.info(
+        `[RiskManager] Position size ${positionSize} exceeds max affordable size ${maxPositionSize} ` +
+        `for equity ${equity.toFixed(2)} at price ${entryPrice.toFixed(2)}. Capping to maxPositionSize.`
+      );
+      positionSize = maxPositionSize;
+    }
+
     // Validate minimum order size (Binance requires 10 USDT minimum)
     const minNotional = 10;
     const notionalValue = positionSize * entryPrice;
@@ -235,14 +245,16 @@ export class RiskManager {
     return price > 0 && Number.isFinite(price);
   }
 
-  /**
-   * Calculate maximum position size given equity and entry price
-   */
   static getMaxPositionSize(equity: number, entryPrice: number, minNotional: number = 10): number {
     if (!this.isValidPrice(entryPrice)) return 0;
-    const maxSize = equity / entryPrice;
+    // Use 99.9% of equity to leave a tiny buffer for precision/rounding
+    const maxSize = (equity * 0.999) / entryPrice;
     const minSize = minNotional / entryPrice;
-    return maxSize >= minSize ? formatQuantity(maxSize, PRECISION.QUANTITY) : 0;
+    if (maxSize < minSize) return 0;
+
+    const decimals = PRECISION.QUANTITY;
+    const factor = Math.pow(10, decimals);
+    return Math.floor(maxSize * factor) / factor;
   }
 
   /**
