@@ -26,6 +26,13 @@ export class BinanceWebSocket extends EventEmitter {
   private messageQueue: any[] = [];
   private lastMessageTime: number = Date.now();
   private pendingSubscriptions: Set<string> = new Set();
+  
+  // Circuit breaker for handling persistent connection failures
+  private consecutive451Errors: number = 0;
+  private circuitBreakerOpen: boolean = false;
+  private circuitBreakerResetTime: number = 0;
+  private readonly CIRCUIT_BREAKER_THRESHOLD = 5; // Open circuit after 5 consecutive 451s
+  private readonly CIRCUIT_BREAKER_RESET_DELAY_MS = 5 * 60 * 1000; // 5 minutes
 
   constructor(config: WebSocketConfig) {
     super();
@@ -56,6 +63,7 @@ export class BinanceWebSocket extends EventEmitter {
         this.ws.on('open', () => {
           logger.info(`WebSocket connected to ${this.url}`);
           this.reconnectAttempts = 0;
+          this.consecutive451Errors = 0; // Reset 451 error counter on successful connection
           this.reconnectDelay = WS.RECONNECT_DELAY_MS;
           this.emit('connected');
           this.subscribeToStreams();
@@ -72,12 +80,20 @@ export class BinanceWebSocket extends EventEmitter {
           const errorMsg = error.message || JSON.stringify(error);
           logger.error(`WebSocket error: ${errorMsg}`);
           
-          // Log HTTP response code if available
-          if (error.statusCode) {
-            logger.error(`WebSocket HTTP status: ${error.statusCode}`);
-            if (error.statusCode === 451) {
-              logger.error('HTTP 451: Connection blocked by Binance (IP may be rate-limited or blocked)');
+          // Check for HTTP 451 (blocked/rate-limited)
+          if (error.statusCode === 451) {
+            this.consecutive451Errors++;
+            logger.error(`HTTP 451: Connection blocked by Binance (attempt ${this.consecutive451Errors}/${this.CIRCUIT_BREAKER_THRESHOLD})`);
+            
+            // Open circuit breaker after threshold
+            if (this.consecutive451Errors >= this.CIRCUIT_BREAKER_THRESHOLD) {
+              this.circuitBreakerOpen = true;
+              this.circuitBreakerResetTime = Date.now() + this.CIRCUIT_BREAKER_RESET_DELAY_MS;
+              logger.error(`Circuit breaker OPEN: Stopping reconnection attempts for ${this.CIRCUIT_BREAKER_RESET_DELAY_MS / 1000}s`);
+              logger.error('Your IP is being rate-limited by Binance. Will retry after cooldown period.');
             }
+          } else if (error.statusCode) {
+            logger.error(`WebSocket HTTP status: ${error.statusCode}`);
           }
           
           this.emit('error', error);
@@ -221,6 +237,31 @@ export class BinanceWebSocket extends EventEmitter {
 
   private attemptReconnect(): void {
     if (this.isIntentionallyClosed) return;
+
+    // Check if circuit breaker is open
+    if (this.circuitBreakerOpen) {
+      const timeUntilReset = Math.max(0, this.circuitBreakerResetTime - Date.now());
+      
+      if (timeUntilReset > 0) {
+        logger.warn(`Circuit breaker is OPEN. Will retry in ${Math.round(timeUntilReset / 1000)}s`);
+        
+        // Schedule reset
+        setTimeout(() => {
+          logger.info('Circuit breaker RESET: Attempting to reconnect');
+          this.circuitBreakerOpen = false;
+          this.consecutive451Errors = 0;
+          this.reconnectDelay = WS.RECONNECT_DELAY_MS;
+          this.attemptReconnect();
+        }, timeUntilReset);
+        
+        return;
+      } else {
+        // Time has passed, reset and try again
+        this.circuitBreakerOpen = false;
+        this.consecutive451Errors = 0;
+        this.reconnectDelay = WS.RECONNECT_DELAY_MS;
+      }
+    }
 
     this.reconnectAttempts++;
     this.reconnectDelay = Math.min(
