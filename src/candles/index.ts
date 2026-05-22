@@ -221,6 +221,19 @@ export class CandleBuilder {
   }
 
   /**
+   * Seed historical candles into a buffer.
+   * Useful on startup so that indicators can be computed immediately.
+   */
+  seedCandles(pair: string, interval: string, candles: Candle[]): void {
+    const bufferKey = `${pair}-${interval}`;
+    this.buffers.set(bufferKey, candles.slice(-500));
+    if (candles.length > 0) {
+      this.lastProcessedTimestamps.set(bufferKey, candles[candles.length - 1].timestamp);
+    }
+    logger.info(`[CandleBuilder] Seeded ${candles.length} historical candles for ${bufferKey}`);
+  }
+
+  /**
    * Clear all internal state (useful for testing / restart)
    */
   clearBuffers(): void {

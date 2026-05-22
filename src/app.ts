@@ -10,6 +10,8 @@ import { healthMonitor } from '@/monitoring';
 import { recoveryManager } from '@/recovery';
 import logger from '@/logging';
 import { sleep } from '@/utils';
+import axios from 'axios';
+import { Candle } from '@/types';
 
 let isRunning = false;
 let isInitialized = false;
@@ -64,6 +66,39 @@ async function initialize(): Promise<void> {
       },
       executionEngine
     );
+
+    // Fetch and seed historical candles from Binance on startup so strategies have immediate historical data
+    logger.info('[App] Seeding historical candles from Binance API...');
+    for (const pair of config.tradingPairs) {
+      for (const interval of config.intervals) {
+        try {
+          logger.info(`[App] Seeding ${pair} ${interval} historical candles...`);
+          const response = await axios.get(`https://api.binance.com/api/v3/klines`, {
+            params: {
+              symbol: pair,
+              interval: interval,
+              limit: 300,
+            },
+          });
+
+          const historicalCandles: Candle[] = response.data.map((k: any) => ({
+            pair,
+            interval,
+            timestamp: k[0],
+            open: parseFloat(k[1]),
+            high: parseFloat(k[2]),
+            low: parseFloat(k[3]),
+            close: parseFloat(k[4]),
+            volume: parseFloat(k[5]),
+            isClosed: true,
+          }));
+
+          candleBuilder.seedCandles(pair, interval, historicalCandles);
+        } catch (err: any) {
+          logger.warn(`[App] Failed to seed historical candles for ${pair} ${interval}: ${err.message}`);
+        }
+      }
+    }
 
     // Recover state from database
     await recoveryManager.recoverState(executionEngine);
