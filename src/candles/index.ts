@@ -8,106 +8,123 @@ export interface KlineData {
   E: number; // Event time
   s: string; // Symbol
   k: {
-    t: number; // Kline start time
-    T: number; // Kline close time
-    s: string; // Symbol
-    i: string; // Interval
-    f: number; // First trade ID
-    L: number; // Last trade ID
-    o: string; // Open price
-    c: string; // Close price
-    h: string; // High price
-    l: string; // Low price
-    v: string; // Base asset volume
-    n: number; // Number of trades
-    x: boolean; // Is this kline closed?
-    q: string; // Quote asset volume
-    V: string; // Taker buy base asset volume
-    Q: string; // Taker buy quote asset volume
-    B: string; // Ignore
+    t: number;    // Kline start time  ← used as candle timestamp
+    T: number;    // Kline close time
+    s: string;    // Symbol
+    i: string;    // Interval
+    f: number;    // First trade ID
+    L: number;    // Last trade ID
+    o: string;    // Open price
+    c: string;    // Close price
+    h: string;    // High price
+    l: string;    // Low price
+    v: string;    // Base asset volume
+    n: number;    // Number of trades
+    x: boolean;   // Is this kline closed?
+    q: string;    // Quote asset volume
+    V: string;    // Taker buy base asset volume
+    Q: string;    // Taker buy quote asset volume
+    B: string;    // Ignore
   };
 }
 
 export class CandleBuilder {
-  private buffers: Map<string, Candle[]> = new Map(); // key: pair-interval
-  private partialCandles: Map<string, PartialCandle> = new Map(); // key: pair-interval
-  private lastProcessedTimestamps: Map<string, number> = new Map(); // key: pair-interval
+  private buffers: Map<string, Candle[]> = new Map();
+  private partialCandles: Map<string, PartialCandle> = new Map();
+  private lastProcessedTimestamps: Map<string, number> = new Map();
   private closedCandleCallbacks: Map<string, (candle: Candle) => void> = new Map();
 
   /**
-   * Process kline data from WebSocket
+   * Process kline data from WebSocket.
+   *
+   * Must be called for BOTH open (k.x=false) and closed (k.x=true) events:
+   * - Open events update the partial candle so getPartialCandle() returns live price.
+   * - Closed events add the candle to the buffer for strategy consumption.
+   *
+   * Fix: the previous app.ts only forwarded closed candles here, making
+   * getPartialCandle() always return null and currentPrice always stale.
    */
   processKline(data: KlineData): Candle | null {
     const { s: pair, k } = data;
     const interval = k.i;
     const bufferKey = `${pair}-${interval}`;
 
-    const candleData = {
+    const candleData: Candle = {
       pair,
       interval,
-      timestamp: k.t,
-      open: parseFloat(k.o),
-      high: parseFloat(k.h),
-      low: parseFloat(k.l),
-      close: parseFloat(k.c),
+      timestamp: k.t,           // always use kline OPEN time as the candle timestamp
+      open:   parseFloat(k.o),
+      high:   parseFloat(k.h),
+      low:    parseFloat(k.l),
+      close:  parseFloat(k.c),
       volume: parseFloat(k.v),
       isClosed: k.x,
     };
 
-    // Validate candle data
     if (!this.isValidCandle(candleData)) {
-      logger.warn(`Invalid candle data received: ${JSON.stringify(candleData)}`);
+      logger.warn(`[CandleBuilder] Invalid candle data for ${bufferKey}: ${JSON.stringify(candleData)}`);
       return null;
     }
 
-    // Store partial candle for in-progress data
     if (!k.x) {
+      // In-progress candle — update partial store for live price tracking
       this.partialCandles.set(bufferKey, {
-        pair: candleData.pair,
-        interval: candleData.interval,
-        timestamp: candleData.timestamp,
-        open: candleData.open,
-        high: candleData.high,
-        low: candleData.low,
-        close: candleData.close,
-        volume: candleData.volume,
-        isComplete: candleData.isClosed,
+        pair:       candleData.pair,
+        interval:   candleData.interval,
+        timestamp:  candleData.timestamp,
+        open:       candleData.open,
+        high:       candleData.high,
+        low:        candleData.low,
+        close:      candleData.close,
+        volume:     candleData.volume,
+        isComplete: false,
       });
       return null;
     }
 
-    // Process closed candle
+    // Closed candle — add to buffer and clear partial
     return this.processClosedCandle(candleData);
   }
 
   /**
-   * Process a closed candle
+   * Process a closed candle: deduplicate, gap-detect, buffer, and fire callbacks.
    */
   private processClosedCandle(candleData: Candle): Candle {
     const bufferKey = `${candleData.pair}-${candleData.interval}`;
     const lastTimestamp = this.lastProcessedTimestamps.get(bufferKey) || 0;
 
-    // Detect missing candles
     const intervalMs = INTERVALS_MS[candleData.interval as keyof typeof INTERVALS_MS] || 0;
-    if (lastTimestamp > 0 && candleData.timestamp - lastTimestamp > intervalMs * 1.5) {
+
+    // Gap detection
+    if (lastTimestamp > 0 && intervalMs > 0 && candleData.timestamp - lastTimestamp > intervalMs * 1.5) {
       logger.warn(
-        `Missing candle(s) detected for ${bufferKey}: gap of ${candleData.timestamp - lastTimestamp}ms`
+        `[CandleBuilder] Missing candle(s) for ${bufferKey}: ` +
+        `gap of ${candleData.timestamp - lastTimestamp}ms ` +
+        `(expected ~${intervalMs}ms)`
       );
     }
 
-    // Check for out-of-order candles
+    // Reject out-of-order candles
     if (lastTimestamp > 0 && candleData.timestamp < lastTimestamp) {
-      logger.warn(`Out-of-order candle received for ${bufferKey}`);
+      logger.warn(
+        `[CandleBuilder] Out-of-order candle for ${bufferKey}: ` +
+        `got ${candleData.timestamp}, last was ${lastTimestamp}`
+      );
+      return candleData;
+    }
+
+    // Deduplicate: ignore if we already processed this candle
+    if (candleData.timestamp === lastTimestamp) {
+      logger.debug(`[CandleBuilder] Duplicate closed candle for ${bufferKey} @ ${candleData.timestamp} — skipped`);
       return candleData;
     }
 
     this.lastProcessedTimestamps.set(bufferKey, candleData.timestamp);
 
-    // Add to buffer
     const buffer = this.buffers.get(bufferKey) || [];
     buffer.push(candleData);
 
-    // Keep only last N candles to avoid memory bloat
+    // Cap buffer at 500 candles to prevent unbounded memory growth
     const maxBufferSize = 500;
     if (buffer.length > maxBufferSize) {
       buffer.shift();
@@ -115,10 +132,10 @@ export class CandleBuilder {
 
     this.buffers.set(bufferKey, buffer);
 
-    // Remove from partial candles
+    // Clear the partial candle now that this interval has closed
     this.partialCandles.delete(bufferKey);
 
-    // Trigger callback if registered
+    // Fire registered callback
     const callback = this.closedCandleCallbacks.get(bufferKey);
     if (callback) {
       callback(candleData);
@@ -128,7 +145,7 @@ export class CandleBuilder {
   }
 
   /**
-   * Get the latest closed candle
+   * Get the latest closed candle for a pair/interval
    */
   getLatestCandle(pair: string, interval: string): Candle | null {
     const bufferKey = `${pair}-${interval}`;
@@ -137,7 +154,7 @@ export class CandleBuilder {
   }
 
   /**
-   * Get the partial/in-progress candle
+   * Get the in-progress (partial) candle for live price
    */
   getPartialCandle(pair: string, interval: string): PartialCandle | null {
     const bufferKey = `${pair}-${interval}`;
@@ -145,7 +162,7 @@ export class CandleBuilder {
   }
 
   /**
-   * Get last N candles
+   * Get last N closed candles (ascending by timestamp)
    */
   getCandles(pair: string, interval: string, limit: number = 100): Candle[] {
     const bufferKey = `${pair}-${interval}`;
@@ -154,10 +171,9 @@ export class CandleBuilder {
   }
 
   /**
-   * Check if the latest candle is closed
+   * Check if the latest candle for a pair/interval is considered closed
    */
   isLatestCandleClosed(pair: string, interval: string): boolean {
-    const bufferKey = `${pair}-${interval}`;
     const latestCandle = this.getLatestCandle(pair, interval);
     if (!latestCandle) return false;
 
@@ -166,7 +182,7 @@ export class CandleBuilder {
   }
 
   /**
-   * Register callback for closed candles
+   * Register a callback fired each time a candle closes for this pair/interval
    */
   onCandleClosed(pair: string, interval: string, callback: (candle: Candle) => void): void {
     const bufferKey = `${pair}-${interval}`;
@@ -174,7 +190,7 @@ export class CandleBuilder {
   }
 
   /**
-   * Wait for next candle close
+   * Wait (promise) for the next candle close for a pair/interval
    */
   async waitForCandleClose(pair: string, interval: string, maxWait: number = 300000): Promise<Candle> {
     return new Promise((resolve, reject) => {
@@ -182,13 +198,11 @@ export class CandleBuilder {
       const originalCallback = this.closedCandleCallbacks.get(bufferKey);
 
       const wrappedCallback = (candle: Candle) => {
-        // Restore original callback
         if (originalCallback) {
           this.closedCandleCallbacks.set(bufferKey, originalCallback);
         } else {
           this.closedCandleCallbacks.delete(bufferKey);
         }
-
         clearTimeout(timeoutId);
         resolve(candle);
       };
@@ -196,20 +210,18 @@ export class CandleBuilder {
       this.closedCandleCallbacks.set(bufferKey, wrappedCallback);
 
       const timeoutId = setTimeout(() => {
-        // Restore original callback
         if (originalCallback) {
           this.closedCandleCallbacks.set(bufferKey, originalCallback);
         } else {
           this.closedCandleCallbacks.delete(bufferKey);
         }
-
-        reject(new Error(`Timeout waiting for candle close for ${bufferKey}`));
+        reject(new Error(`Timeout waiting for candle close: ${bufferKey}`));
       }, maxWait);
     });
   }
 
   /**
-   * Clear all buffers
+   * Clear all internal state (useful for testing / restart)
    */
   clearBuffers(): void {
     this.buffers.clear();
@@ -219,7 +231,7 @@ export class CandleBuilder {
   }
 
   /**
-   * Get buffer statistics
+   * Diagnostic stats for monitoring
    */
   getStats(): Record<string, any> {
     const stats: Record<string, any> = {
@@ -236,43 +248,40 @@ export class CandleBuilder {
   }
 
   /**
-   * Validate candle data
+   * Validate candle OHLCV integrity
    */
   private isValidCandle(candle: Candle): boolean {
     if (!candle.pair || !candle.interval) return false;
     if (candle.timestamp <= 0) return false;
-    if (candle.open <= 0 || candle.high <= 0 || candle.low <= 0 || candle.close <= 0)
-      return false;
+    if (candle.open <= 0 || candle.high <= 0 || candle.low <= 0 || candle.close <= 0) return false;
     if (candle.high < candle.low) return false;
     if (candle.high < candle.open || candle.high < candle.close) return false;
     if (candle.low > candle.open || candle.low > candle.close) return false;
     if (candle.volume < 0) return false;
-
     return true;
   }
 
   /**
-   * Synchronize intervals - check if all related intervals have closed candles at the right time
+   * Check if all requested intervals have recent candles for a pair.
+   * "Recent" means the latest candle timestamp is within 2× the interval window.
    */
   isSynchronized(pair: string, intervals: string[]): boolean {
-    let referenceTimestamp: number | null = null;
+    const now = Date.now();
 
     for (const interval of intervals) {
       const candle = this.getLatestCandle(pair, interval);
       if (!candle) return false;
 
-      if (!referenceTimestamp) {
-        referenceTimestamp = candle.timestamp;
-      } else {
-        // Check if all candles have compatible timestamps
-        const openTime = getCandleOpenTime(Date.now(), interval);
-        if (candle.timestamp !== referenceTimestamp) {
-          // Timestamps don't align exactly, but check if they're at compatible intervals
-          const intervalMs = INTERVALS_MS[interval as keyof typeof INTERVALS_MS] || 0;
-          if (Math.abs(candle.timestamp - referenceTimestamp) > intervalMs) {
-            return false;
-          }
-        }
+      const intervalMs = INTERVALS_MS[interval as keyof typeof INTERVALS_MS] || 0;
+      if (intervalMs === 0) continue;
+
+      // Candle is stale if its open time is more than 2 intervals ago
+      if (now - candle.timestamp > intervalMs * 2) {
+        logger.debug(
+          `[CandleBuilder] isSynchronized: ${pair} ${interval} candle is stale ` +
+          `(age: ${now - candle.timestamp}ms, max: ${intervalMs * 2}ms)`
+        );
+        return false;
       }
     }
 

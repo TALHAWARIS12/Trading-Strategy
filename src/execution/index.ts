@@ -17,7 +17,8 @@ export class ExecutionEngine {
   }
 
   /**
-   * Open a long position
+   * Open a long position.
+   * Checks that we have sufficient balance before accepting the trade.
    */
   openLongTrade(
     pair: string,
@@ -27,9 +28,24 @@ export class ExecutionEngine {
     tp1Price: number,
     tp2Price: number
   ): Trade | null {
-    // Validate trade
     if (!RiskManager.isValidOrderQuantity(quantity, entryPrice)) {
-      logger.warn(`Invalid order quantity for long: ${quantity} at ${entryPrice}`);
+      logger.warn(`[ExecutionEngine] Invalid order quantity for long: ${quantity} at ${entryPrice}`);
+      return null;
+    }
+
+    // Reject if we already have an open trade for this pair to prevent doubling up
+    if (this.hasOpenTrade(pair)) {
+      logger.warn(`[ExecutionEngine] Already have an open trade for ${pair} — skipping long entry`);
+      return null;
+    }
+
+    // Basic margin check: notional cost must not exceed available balance
+    const notionalCost = quantity * entryPrice;
+    if (notionalCost > this.totalBalance) {
+      logger.warn(
+        `[ExecutionEngine] Insufficient balance for long: need ${notionalCost.toFixed(2)}, ` +
+        `have ${this.totalBalance.toFixed(2)}`
+      );
       return null;
     }
 
@@ -48,8 +64,11 @@ export class ExecutionEngine {
     };
 
     this.openTrades.set(tradeId, trade);
+
     if (database.isReady()) {
-      database.insertTrade(trade).catch((err) => logger.error(`Failed to persist open long trade: ${err}`));
+      database.insertTrade(trade).catch((err) =>
+        logger.error(`[ExecutionEngine] Failed to persist open long trade: ${err}`)
+      );
     }
 
     logTrade({
@@ -65,13 +84,17 @@ export class ExecutionEngine {
       timestamp: trade.entryTime,
     });
 
-    logger.info(`Long trade opened: ${pair} @ ${entryPrice}, SL: ${stopLossPrice}, TP1: ${tp1Price}, TP2: ${tp2Price}`);
+    logger.info(
+      `[ExecutionEngine] Long trade opened: ${pair} @ ${entryPrice} | ` +
+      `Qty: ${quantity} | SL: ${stopLossPrice} | TP1: ${tp1Price} | TP2: ${tp2Price}`
+    );
 
     return trade;
   }
 
   /**
-   * Open a short position
+   * Open a short position.
+   * Checks that we have sufficient balance before accepting the trade.
    */
   openShortTrade(
     pair: string,
@@ -81,9 +104,24 @@ export class ExecutionEngine {
     tp1Price: number,
     tp2Price: number
   ): Trade | null {
-    // Validate trade
     if (!RiskManager.isValidOrderQuantity(quantity, entryPrice)) {
-      logger.warn(`Invalid order quantity for short: ${quantity} at ${entryPrice}`);
+      logger.warn(`[ExecutionEngine] Invalid order quantity for short: ${quantity} at ${entryPrice}`);
+      return null;
+    }
+
+    // Reject if we already have an open trade for this pair
+    if (this.hasOpenTrade(pair)) {
+      logger.warn(`[ExecutionEngine] Already have an open trade for ${pair} — skipping short entry`);
+      return null;
+    }
+
+    // Basic margin check
+    const notionalCost = quantity * entryPrice;
+    if (notionalCost > this.totalBalance) {
+      logger.warn(
+        `[ExecutionEngine] Insufficient balance for short: need ${notionalCost.toFixed(2)}, ` +
+        `have ${this.totalBalance.toFixed(2)}`
+      );
       return null;
     }
 
@@ -102,8 +140,11 @@ export class ExecutionEngine {
     };
 
     this.openTrades.set(tradeId, trade);
+
     if (database.isReady()) {
-      database.insertTrade(trade).catch((err) => logger.error(`Failed to persist open short trade: ${err}`));
+      database.insertTrade(trade).catch((err) =>
+        logger.error(`[ExecutionEngine] Failed to persist open short trade: ${err}`)
+      );
     }
 
     logTrade({
@@ -119,30 +160,55 @@ export class ExecutionEngine {
       timestamp: trade.entryTime,
     });
 
-    logger.info(`Short trade opened: ${pair} @ ${entryPrice}, SL: ${stopLossPrice}, TP1: ${tp1Price}, TP2: ${tp2Price}`);
+    logger.info(
+      `[ExecutionEngine] Short trade opened: ${pair} @ ${entryPrice} | ` +
+      `Qty: ${quantity} | SL: ${stopLossPrice} | TP1: ${tp1Price} | TP2: ${tp2Price}`
+    );
 
     return trade;
   }
 
   /**
-   * Close a trade at take profit 1
+   * Close HALF the position at TP1.
+   *
+   * Bug fix: original code set status to TP1_PARTIAL_CLOSE but never updated
+   * the balance and never re-inserted the trade into openTrades under its
+   * updated state, so TP2/SL checks on the same trade would still see
+   * status='OPEN' on the next tick via the stale Map reference.
+   *
+   * Now:
+   * - Realises PnL on 50% of qty and adds it to balance.
+   * - Updates remaining qty on the trade object in-place (stays in openTrades).
+   * - Persists the updated trade to the database.
    */
   closeTradeAtTP1(tradeId: string, currentPrice: number): Trade | null {
     const trade = this.openTrades.get(tradeId);
     if (!trade) {
-      logger.warn(`Trade ${tradeId} not found`);
+      logger.warn(`[ExecutionEngine] Trade ${tradeId} not found for TP1 close`);
       return null;
     }
 
-    const pnl = calculatePnL(trade.entryPrice, currentPrice, trade.entryQty, trade.side);
+    if (trade.status !== 'OPEN') {
+      logger.warn(`[ExecutionEngine] Trade ${tradeId} is not OPEN (status: ${trade.status}) — skipping TP1`);
+      return null;
+    }
+
+    // Close 50% of the position at TP1
+    const tp1Qty = trade.entryQty / 2;
+    const pnl = calculatePnL(trade.entryPrice, currentPrice, tp1Qty, trade.side);
     const pnlPercent = calculatePnLPercent(trade.entryPrice, currentPrice, trade.side);
 
-    trade.exitPrice = formatPrice(currentPrice, PRECISION.PRICE);
-    trade.exitTime = getCurrentTimestamp();
-    trade.status = 'TP1_PARTIAL_CLOSE';
-    trade.pnl = formatPrice(pnl, PRECISION.PRICE);
-    trade.pnlPercent = formatPrice(pnlPercent, PRECISION.PERCENTAGE);
-    trade.exitReason = 'TP1_HIT';
+    // Update balance with realised profit on the partial close
+    this.totalBalance += pnl;
+
+    // Mutate trade in-place — it stays in openTrades for TP2/SL monitoring
+    trade.exitPrice    = formatPrice(currentPrice, PRECISION.PRICE);
+    trade.exitTime     = getCurrentTimestamp();
+    trade.status       = 'TP1_PARTIAL_CLOSE';
+    trade.pnl          = formatPrice(pnl, PRECISION.PRICE);
+    trade.pnlPercent   = formatPrice(pnlPercent, PRECISION.PERCENTAGE);
+    trade.exitReason   = 'TP1_HIT';
+    trade.entryQty     = tp1Qty; // remaining qty for TP2/SL leg
 
     logTrade({
       event: 'TRADE_TP1_CLOSE',
@@ -151,46 +217,53 @@ export class ExecutionEngine {
       side: trade.side,
       entryPrice: trade.entryPrice,
       exitPrice: currentPrice,
-      quantity: trade.entryQty,
+      quantity: tp1Qty,
       pnl,
       pnlPercent,
       timestamp: trade.exitTime,
     });
 
-    logger.info(`Trade ${tradeId} closed at TP1: PnL: ${pnl}, ${pnlPercent}%`);
+    logger.info(
+      `[ExecutionEngine] Trade ${tradeId} TP1 partial close: ` +
+      `${tp1Qty.toFixed(6)} @ ${currentPrice} | ` +
+      `PnL: ${formatPrice(pnl, PRECISION.PRICE)} (${formatPrice(pnlPercent, PRECISION.PERCENTAGE)}%) | ` +
+      `Balance: ${this.totalBalance.toFixed(2)}`
+    );
 
     if (database.isReady()) {
-      database.insertTrade(trade).catch((err) => logger.error(`Failed to persist TP1 trade: ${err}`));
+      database.insertTrade(trade).catch((err) =>
+        logger.error(`[ExecutionEngine] Failed to persist TP1 trade: ${err}`)
+      );
     }
 
     return trade;
   }
 
   /**
-   * Close a trade at take profit 2 or stop loss
+   * Fully close a trade at TP2 or stop loss.
    */
   closeTradeAtExit(tradeId: string, currentPrice: number, exitReason: 'TP2_HIT' | 'SL_HIT'): Trade | null {
     const trade = this.openTrades.get(tradeId);
     if (!trade) {
-      logger.warn(`Trade ${tradeId} not found`);
+      logger.warn(`[ExecutionEngine] Trade ${tradeId} not found for exit close`);
       return null;
     }
 
     const pnl = calculatePnL(trade.entryPrice, currentPrice, trade.entryQty, trade.side);
     const pnlPercent = calculatePnLPercent(trade.entryPrice, currentPrice, trade.side);
 
-    trade.exitPrice = formatPrice(currentPrice, PRECISION.PRICE);
-    trade.exitTime = getCurrentTimestamp();
-    trade.status = 'CLOSED';
-    trade.pnl = formatPrice(pnl, PRECISION.PRICE);
+    // Update balance with realised PnL on remaining qty
+    this.totalBalance += pnl;
+
+    trade.exitPrice  = formatPrice(currentPrice, PRECISION.PRICE);
+    trade.exitTime   = getCurrentTimestamp();
+    trade.status     = 'CLOSED';
+    trade.pnl        = formatPrice((trade.pnl || 0) + pnl, PRECISION.PRICE); // accumulate with TP1 pnl if any
     trade.pnlPercent = formatPrice(pnlPercent, PRECISION.PERCENTAGE);
     trade.exitReason = exitReason;
 
     this.closedTrades.push(trade);
     this.openTrades.delete(tradeId);
-
-    // Update balance
-    this.totalBalance += pnl;
 
     logTrade({
       event: 'TRADE_CLOSE',
@@ -207,18 +280,23 @@ export class ExecutionEngine {
     });
 
     logger.info(
-      `Trade ${tradeId} closed at ${exitReason}: PnL: ${formatPrice(pnl, PRECISION.PRICE)}, ${formatPrice(pnlPercent, PRECISION.PERCENTAGE)}%`
+      `[ExecutionEngine] Trade ${tradeId} closed at ${exitReason}: ` +
+      `${currentPrice} | PnL: ${formatPrice(pnl, PRECISION.PRICE)} ` +
+      `(${formatPrice(pnlPercent, PRECISION.PERCENTAGE)}%) | ` +
+      `Balance: ${this.totalBalance.toFixed(2)}`
     );
 
     if (database.isReady()) {
-      database.insertTrade(trade).catch((err) => logger.error(`Failed to persist closed trade: ${err}`));
+      database.insertTrade(trade).catch((err) =>
+        logger.error(`[ExecutionEngine] Failed to persist closed trade: ${err}`)
+      );
     }
 
     return trade;
   }
 
   /**
-   * Get an open trade
+   * Get a single open trade by ID
    */
   getOpenTrade(tradeId: string): Trade | null {
     return this.openTrades.get(tradeId) || null;
@@ -239,21 +317,21 @@ export class ExecutionEngine {
   }
 
   /**
-   * Get open trades for a pair
+   * Get open trades for a specific pair
    */
   getOpenTradesForPair(pair: string): Trade[] {
     return this.getOpenTrades().filter((t) => t.pair === pair);
   }
 
   /**
-   * Check if there's an open trade for a pair
+   * Check if there is any open trade for a pair
    */
   hasOpenTrade(pair: string): boolean {
     return this.getOpenTrades().some((t) => t.pair === pair);
   }
 
   /**
-   * Get current unrealized PnL
+   * Get current unrealized PnL across all open trades
    */
   getUnrealizedPnL(currentPrices: Map<string, number>): number {
     let totalUnrealizedPnL = 0;
@@ -270,7 +348,7 @@ export class ExecutionEngine {
   }
 
   /**
-   * Get realized PnL from closed trades
+   * Get realized PnL from all closed trades
    */
   getRealizedPnL(): number {
     return formatPrice(
@@ -280,74 +358,86 @@ export class ExecutionEngine {
   }
 
   /**
-   * Get total equity
+   * Get total equity (realized balance only).
+   * Used for position sizing — does NOT include unrealized PnL to avoid
+   * over-sizing on open positions.
    */
   getTotalEquity(): number {
     return formatPrice(this.totalBalance, PRECISION.PRICE);
   }
 
   /**
-   * Get current balance (equity - unrealized losses)
+   * Get current cash balance
    */
   getCurrentBalance(): number {
     return formatPrice(this.totalBalance, PRECISION.PRICE);
   }
 
   /**
-   * Get performance metrics
+   * Get full performance metrics
    */
   getPerformanceMetrics(): Record<string, number> {
     const closedTrades = this.getClosedTrades();
-    const openTrades = this.getOpenTrades();
-    const totalTrades = closedTrades.length + openTrades.length;
+    const openTrades   = this.getOpenTrades();
+    const totalTrades  = closedTrades.length + openTrades.length;
 
     const winningTrades = closedTrades.filter((t) => (t.pnl || 0) > 0).length;
-    const winRate = totalTrades > 0 ? (winningTrades / closedTrades.length) * 100 : 0;
+    const losingTrades  = closedTrades.filter((t) => (t.pnl || 0) < 0).length;
 
-    const totalPnL = this.getRealizedPnL();
+    // Guard against division by zero when no closed trades yet
+    const winRate = closedTrades.length > 0 ? (winningTrades / closedTrades.length) * 100 : 0;
+
+    const totalPnL        = this.getRealizedPnL();
     const totalPnLPercent = this.initialBalance > 0 ? (totalPnL / this.initialBalance) * 100 : 0;
 
     const avgWin =
       winningTrades > 0
-        ? closedTrades.filter((t) => (t.pnl || 0) > 0).reduce((sum, t) => sum + (t.pnl || 0), 0) / winningTrades
+        ? closedTrades
+            .filter((t) => (t.pnl || 0) > 0)
+            .reduce((sum, t) => sum + (t.pnl || 0), 0) / winningTrades
         : 0;
 
-    const losingTrades = closedTrades.filter((t) => (t.pnl || 0) < 0).length;
     const avgLoss =
       losingTrades > 0
-        ? Math.abs(closedTrades.filter((t) => (t.pnl || 0) < 0).reduce((sum, t) => sum + (t.pnl || 0), 0) / losingTrades)
+        ? Math.abs(
+            closedTrades
+              .filter((t) => (t.pnl || 0) < 0)
+              .reduce((sum, t) => sum + (t.pnl || 0), 0) / losingTrades
+          )
         : 0;
 
     const profitFactor = avgLoss > 0 ? avgWin / avgLoss : 0;
 
     return {
       totalTrades,
-      closedTrades: closedTrades.length,
-      openTrades: openTrades.length,
+      closedTrades:     closedTrades.length,
+      openTrades:       openTrades.length,
       winningTrades,
       losingTrades,
-      winRate: formatPrice(winRate, PRECISION.PERCENTAGE),
-      totalPnL: formatPrice(totalPnL, PRECISION.PRICE),
-      totalPnLPercent: formatPrice(totalPnLPercent, PRECISION.PERCENTAGE),
-      avgWin: formatPrice(avgWin, PRECISION.PRICE),
-      avgLoss: formatPrice(avgLoss, PRECISION.PRICE),
-      profitFactor: formatPrice(profitFactor, PRECISION.PRICE),
+      winRate:          formatPrice(winRate, PRECISION.PERCENTAGE),
+      totalPnL:         formatPrice(totalPnL, PRECISION.PRICE),
+      totalPnLPercent:  formatPrice(totalPnLPercent, PRECISION.PERCENTAGE),
+      avgWin:           formatPrice(avgWin, PRECISION.PRICE),
+      avgLoss:          formatPrice(avgLoss, PRECISION.PRICE),
+      profitFactor:     formatPrice(profitFactor, PRECISION.PRICE),
     };
   }
 
   /**
-   * Reset trading engine (for paper account reset)
+   * Reset the engine (paper account reset)
    */
   reset(newBalance: number): void {
     this.openTrades.clear();
     this.closedTrades = [];
     this.totalBalance = newBalance;
     this.initialBalance = newBalance;
-    logger.info(`Trading engine reset with balance: ${newBalance}`);
+    logger.info(`[ExecutionEngine] Engine reset with balance: ${newBalance}`);
   }
 
   /**
-   * Load trades (e.g. from database recovery)
+   * Load trades from database recovery.
+   * Recalculates balance from closed trade PnL so the in-memory state
+   * matches what was persisted.
    */
   loadTrades(openTrades: Trade[], closedTrades: Trade[]): void {
     this.openTrades.clear();
@@ -356,10 +446,12 @@ export class ExecutionEngine {
     }
     this.closedTrades = [...closedTrades];
 
-    // Recalculate balance based on closed trades PnL
     const totalPnL = closedTrades.reduce((sum, t) => sum + (t.pnl || 0), 0);
     this.totalBalance = this.initialBalance + totalPnL;
 
-    logger.info(`Loaded ${openTrades.length} open and ${closedTrades.length} closed trades. Balance updated to: ${this.totalBalance}`);
+    logger.info(
+      `[ExecutionEngine] Loaded ${openTrades.length} open and ${closedTrades.length} closed trades. ` +
+      `Balance updated to: ${this.totalBalance}`
+    );
   }
 }
