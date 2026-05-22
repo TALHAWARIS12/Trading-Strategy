@@ -172,8 +172,9 @@ async function processingLoop(): Promise<void> {
             continue; // Not enough data
           }
 
-          const latestCandle3m = candles3m[candles3m.length - 1];
-          const currentPrice = latestCandle3m.close;
+          // Use current live price from in-progress candle, fallback to last closed candle
+          const partialCandle3m = candleBuilder.getPartialCandle(pair, '3m');
+          const currentPrice = partialCandle3m ? partialCandle3m.close : candles3m[candles3m.length - 1].close;
 
           // Process BTC Strategy
           const signals = await btcStrategy.processCandle(candles3m, candles15m, currentPrice);
@@ -201,8 +202,9 @@ async function processingLoop(): Promise<void> {
             continue; // Not enough data
           }
 
-          const latestCandle5m = candles5m[candles5m.length - 1];
-          const currentPrice = latestCandle5m.close;
+          // Use current live price from in-progress candle, fallback to last closed candle
+          const partialCandle5m = candleBuilder.getPartialCandle(pair, '5m');
+          const currentPrice = partialCandle5m ? partialCandle5m.close : candles5m[candles5m.length - 1].close;
 
           // Process ETH Strategy
           const signals = await ethStrategy.processCandle(candles1m, candles5m, candles15m, currentPrice);
